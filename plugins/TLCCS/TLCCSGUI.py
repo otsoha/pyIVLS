@@ -286,15 +286,20 @@ class TLCCS_GUI(QObject):
     def getAutoTime(self) -> tuple[int, float|dict]:
         low = self.autoValue_min  # spectrum low
         high = self.autoValue_max # spectrum high
+
+        low_ms = int(self.autoTime_min * 1000)
+        high_ms = int(self.autoTime_max * 1000)
         if self.settings["integrationtimetype"] == 'auto':
             if self.settings["useintegrationtimeguess"]:
-                guessIntTime = self.settings["integrationTime"] # s
+                guessIntTime_ms = int(self.settings["integrationTime"] * 1000)
             else:
-                guessIntTime = (self.autoTime_min + self.autoTime_max)/2 # s
+                guessIntTime_ms = (low_ms + high_ms) // 2
+
             for iter in range(self.intTimeMaxIterations):
                 print(f"iteration {iter+1} of {self.intTimeMaxIterations}")
-                self.settings["integrationTime"] = guessIntTime #needed for keeping self.lastspectrum in order
-                [status, info] = self.spectrometerSetIntegrationTime(guessIntTime) # convert to seconds
+                guessIntTime_s = guessIntTime_ms / 1000.0
+                self.settings["integrationTime"] = guessIntTime_s #needed for keeping self.lastspectrum in order
+                [status, info] = self.spectrometerSetIntegrationTime(guessIntTime_s) 
                 if status:
                     print(f"tried to set:{guessIntTime}. Error in setting integration time inside AutoTime: {status} {info}")
                     return [status, info]
@@ -302,7 +307,7 @@ class TLCCS_GUI(QObject):
                 if status:
                     print(f"Error in starting scan inside AutoTime: {status} {info}")
                     return [status, info]
-                time.sleep(guessIntTime) # seconds
+                time.sleep(guessIntTime_s) 
                 [status, info] = self._update_spectrum()
                 if status:
                     print(f"Error in getting spectrum inside AutoTime: {status} {info}")
@@ -315,32 +320,21 @@ class TLCCS_GUI(QObject):
                     varDict['name'] = self.settings["samplename"]
                     varDict['comment'] = self.settings["comment"] + " Auto adjust of integration time."
                     self.createFile(varDict = varDict, filedelimeter=self.filedelimeter, address = self.settings["address"] + os.sep + self.settings["filename"] + f"_{guessIntTime*1000}ms.csv", data = info[1])
-                if self.autoValue_min <= max(info[1]) <= self.autoValue_max:
-                    print(f"max(info[1]) = {max(info[1])}, guessIntTime = {guessIntTime}")
-                    print("integration time is OK")
-                    return [0, guessIntTime]
-                if max(info[1])< self.autoValue_min:
-                    if guessIntTime == self.autoValue_max:
-                        print(f"max(info[1]) = {max(info[1])}, guessIntTime = {guessIntTime}")
-                        print("integration time is too low, but it is already at maximum")
-                        return [0, guessIntTime]
-                    print(f"max(info[1]) = {max(info[1])}, guessIntTime = {guessIntTime}")
-                    print("integration time is too low, increasing it")
-                    low = guessIntTime
+                max_val = max(info[1])
+                print(f"max(info[1]) = {max_val}, guessIntTime = {guessIntTime_ms} ms")
+                if low <= max_val <= high:
+                    return 0, guessIntTime_s
+                elif max_val < low:
+                    low_ms = guessIntTime_ms + 1
                 else:
-                    if guessIntTime == self.autoValue_min:
-                        print(f"max(info[1]) = {max(info[1])}, guessIntTime = {guessIntTime}")
-                        print("integration time is too high, but it is already at minimum")
-                        return [0, guessIntTime]
-                    high = guessIntTime
-                guessIntTime = round((low+high)/2)
-                digits = len(str(int(guessIntTime))) ### getting number of digits for rounding
-                base = 10 ** (digits - 1)
-                guessIntTime =  round(guessIntTime / base) * base
-                print(f"guessIntTime = {guessIntTime}, low = {low}, high = {high}")
-            print("end of iterations")
-            return [0, guessIntTime]
+                    high_ms = guessIntTime_ms - 1
 
+                if low_ms > high_ms:
+                    break
+
+                guessIntTime_ms = (low_ms + high_ms) // 2
+        print("end of iterations")
+        return 0, guessIntTime_ms / 1000.0
 
 
 ########Functions
