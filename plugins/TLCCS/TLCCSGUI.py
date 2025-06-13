@@ -301,13 +301,12 @@ class TLCCS_GUI(QObject):
                 self.settings["integrationTime"] = guessIntTime_s #needed for keeping self.lastspectrum in order
                 [status, info] = self.spectrometerSetIntegrationTime(guessIntTime_s) 
                 if status:
-                    print(f"tried to set:{guessIntTime}. Error in setting integration time inside AutoTime: {status} {info}")
+                    print(f"tried to set:{guessIntTime_s}. Error in setting integration time inside AutoTime: {status} {info}")
                     return [status, info]
                 [status, info] = self.spectrometerStartScan()
                 if status:
                     print(f"Error in starting scan inside AutoTime: {status} {info}")
                     return [status, info]
-                time.sleep(guessIntTime_s) 
                 [status, info] = self._update_spectrum()
                 if status:
                     print(f"Error in getting spectrum inside AutoTime: {status} {info}")
@@ -315,7 +314,7 @@ class TLCCS_GUI(QObject):
                 ################ check that info is [wv, spectrum] !!!!!
                 if self.settings["saveautoattmepts"]:
                     varDict ={}
-                    varDict['integrationtime'] = guessIntTime
+                    varDict['integrationtime'] = guessIntTime_s
                     varDict['triggermode'] = 1 if self.settings['externalTrigger'] else 0
                     varDict['name'] = self.settings["samplename"]
                     varDict['comment'] = self.settings["comment"] + " Auto adjust of integration time."
@@ -323,13 +322,17 @@ class TLCCS_GUI(QObject):
                 max_val = max(info[1])
                 print(f"max(info[1]) = {max_val}, guessIntTime = {guessIntTime_ms} ms")
                 if low <= max_val <= high:
+                    print(f"found integration time: {guessIntTime_ms} ms")
                     return 0, guessIntTime_s
                 elif max_val < low:
+                    print(f"max_val < low, setting guessIntTime_ms = {guessIntTime_ms + 1} ms")
                     low_ms = guessIntTime_ms + 1
                 else:
+                    print(f"max_val > high, setting guessIntTime_ms = {guessIntTime_ms - 1} ms")
                     high_ms = guessIntTime_ms - 1
 
                 if low_ms > high_ms:
+                    print(f"low_ms > high_ms, ran out of integration time range, returning 0")
                     break
 
                 guessIntTime_ms = (low_ms + high_ms) // 2
