@@ -90,7 +90,7 @@ class Preprocessor:
             morph_type = s["morphologytypeimage"]
             strength = s["morphologystrengthimage"]
             kernel = ski.morphology.disk(strength)
-            
+
             if morph_type == "erosion":
                 img_binary = ski.morphology.erosion(img_binary, kernel)
             elif morph_type == "dilation":
@@ -99,7 +99,7 @@ class Preprocessor:
                 img_binary = ski.morphology.opening(img_binary, kernel)
             elif morph_type == "closing":
                 img_binary = ski.morphology.closing(img_binary, kernel)
-            
+
             img = img_binary.astype(float)
         img = (img * 255).astype("uint8")
         return img
@@ -141,7 +141,7 @@ class Preprocessor:
             morph_type = s["morphologytypemask"]
             strength = s["morphologystrengthmask"]
             kernel = ski.morphology.disk(strength)
-            
+
             if morph_type == "erosion":
                 mask_binary = ski.morphology.erosion(mask_binary, kernel)
             elif morph_type == "dilation":
@@ -150,9 +150,10 @@ class Preprocessor:
                 mask_binary = ski.morphology.opening(mask_binary, kernel)
             elif morph_type == "closing":
                 mask_binary = ski.morphology.closing(mask_binary, kernel)
-            
+
             mask = mask_binary.astype(float)
         mask = (mask * 255).astype("uint8")
+
         return mask
 
 
@@ -204,19 +205,53 @@ class Affine_IO:
             output_image_path = self.path + os.sep + "masks" + os.sep + filename + ".png"
         # Create a layout view
         view = lay.LayoutView(options=lay.LayoutView.LV_NoGrid)
-        lay.LayoutViewBase.LV_NoEditorOptionsPanel
         view.load_layout(input_gds_path, add_cellview=False)
+        view.selection_size()
         view.zoom_fit()
         view.max_hier()
+        h = view.viewport_height()
+        w = view.viewport_width()
+        aspect_ratio = w / h
+        # scale the image to have the same aspect ratio and height 1080
+        if aspect_ratio > 1:
+            w = 1920
+            h = int(1920 / aspect_ratio)
+        else:
+            h = 1080
+            w = int(1080 * aspect_ratio)
+
         it = view.begin_layers()
+        # colorlist, encoded as 32bit values in the following way:
+        # The color is a 32bit value encoding the blue value in the lower 8 bits, the green value in the next 8 bits and the red value in the 8 bits above that.
+        """             
+        colorlist = [
+            0xFF0000,  # Red
+            0x00FF00,  # Green
+            0x0000FF,  # Blue
+        ]
+
+        """
+        # color_idx = 0
         while not it.at_end():
             lp = it.current()
             new_layer = lp.dup()
             new_layer.visible = True
             new_layer.clear_dither_pattern()
+            """
+            try:
+                new_layer.fill_color = colorlist[color_idx % len(colorlist)]
+                color_idx += 1
+            except IndexError:
+                pass
+            """
             view.set_layer_properties(it, new_layer)
             it.next()
-        view.save_image(output_image_path, width, height)
+        view.set_config("grid-show-ruler", "false")
+        view.commit_config()
+        view.set_config("background-color", "#00000000")
+        view.set_config("grid-visible", "false")
+        view.save_image(output_image_path, width=w, height=h)
+        # view.save_screenshot(output_image_path.replace(".png", "_screenshot.png"))
         internal_mask = cv.imread(output_image_path)
         internal_mask = cv.cvtColor(internal_mask, cv.COLOR_BGR2RGB)
         return internal_mask, filename
@@ -279,7 +314,7 @@ class Affine:
         self.MIN_MATCHES = 4
         self.preprocessor = Preprocessor()
         self.io = Affine_IO(self.path)
-        self.ratio_test = 0.75
+        self.ratio_test = 0.80
         self.residual_threshold = 10
         self.cross_check = True
         self.backend = "SIFT"  # Default backend
@@ -318,7 +353,7 @@ class Affine:
         if self.backend == "SIFT":
             return SIFT()
         elif self.backend == "ORB":
-            return ORB()
+            return ORB(n_keypoints=1000)
 
         else:
             raise AffineError(f"Unsupported backend: {self.backend}", 4)
@@ -354,15 +389,23 @@ class Affine:
             kp_mask, desc_mask = detector.keypoints, detector.descriptors
         except RuntimeError as e:
             raise AffineError(f"Runtime error during {self.backend} detection: {e}", 3) from e
+
         self.result["kp1"] = kp_mask
         self.result["kp2"] = kp_img
+        print("Keypoints in mask:", len(kp_mask))
+        print("Keypoints in image:", len(kp_img))
         matches = match_descriptors(desc_mask, desc_img, max_ratio=max_ratio, cross_check=cross_check)
+        print("Matches found:", len(matches))
         if len(matches) < self.MIN_MATCHES:
             raise AffineError(f"Not enough matches found: {len(matches)} < {self.MIN_MATCHES}", 3)
         if kp_mask is None or kp_img is None:
             raise AffineError("No keypoints found in either image or mask.", 3)
-        src = kp_mask[matches[:, 0]][:, ::-1].astype(np.float32)  # mask keypoints
-        dst = kp_img[matches[:, 1]][:, ::-1].astype(np.float32)  # image keypoints
+        src = kp_mask[matches[:, 0]][:, ::-1].astype(np.float32)  # mask keypoints masked with matches
+        dst = kp_img[matches[:, 1]][:, ::-1].astype(np.float32)  # image keypoints masked with matches
+
+        print("Source points (mask) matched: ", len(src))
+        print("Destination points (image) matched:", len(dst))
+        print("Example mask point: ", src[0])
         model, inliers = self.get_transformation(src, dst, residual_threshold=residual_threshold)
         self.A = model.params
         matches = matches[inliers]
@@ -374,7 +417,9 @@ class Affine:
         self.result["transform"] = model
         return True
 
-    def get_transformation(self, src: np.ndarray, dst: np.ndarray, residual_threshold: int = 10) -> Tuple[Any, np.ndarray]:
+    def get_transformation(
+        self, src: np.ndarray, dst: np.ndarray, residual_threshold: int = 10
+    ) -> Tuple[Any, np.ndarray]:
         """
         Estimate the affine transformation using RANSAC.
         Args:
@@ -386,15 +431,17 @@ class Affine:
         Raises:
             AffineError: If RANSAC fails to find a transform.
         """
+
         model, inliers = ski.measure.ransac(
             (src, dst),
             ski.transform.SimilarityTransform,
+            min_samples=4,
             residual_threshold=residual_threshold,
-            min_samples=self.MIN_MATCHES,
-            max_trials=1000,
+            max_trials=5000,
         )
         if inliers is None:
-            raise AffineError("Ransac can't find transform.", 3)
+            raise AffineError("Ransac filtered out all points", 3)
+
         inliers = np.asarray(inliers)
         return model, inliers
 
@@ -445,9 +492,10 @@ class Affine:
         """
         if self.A is None:
             raise AffineError("No affine transformation found.", 4)
-        point_homogeneous = np.array([point[0], point[1], 1.0])
-        transformed = self.A @ point_homogeneous
-        return float(transformed[0]), float(transformed[1])
+        point_homogeneous = np.array([point[0], point[1], 1.0])  # convert to homogeneous coordinates
+        transformed = self.A @ point_homogeneous  # operate transform on homogeneous coordinates
+        cartesian = transformed[:2] / transformed[2]  # back to cartesian reference frame
+        return float(cartesian[0]), float(cartesian[1])
 
     def update_internal_mask(self, path: str) -> np.ndarray:
         """

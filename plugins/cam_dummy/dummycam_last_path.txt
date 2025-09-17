@@ -1,1 +1,1 @@
-C:/Users/otsoh/Documents/pyIVLS/plugins/cam_dummy/testImages/NC1.png
+C:/Users/otsoh/Documents/pyIVLS/plugins/cam_dummy/testImages/NC2.png

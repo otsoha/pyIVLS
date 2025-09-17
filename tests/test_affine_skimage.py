@@ -224,7 +224,7 @@ def test_preprocessor_settings():
 def test_affine_settings_update():
     aff = Affine()
     # Default
-    assert aff.ratio_test == 0.75
+    assert aff.ratio_test == 0.80
     assert aff.residual_threshold == 10
     assert aff.cross_check is True
     # Update

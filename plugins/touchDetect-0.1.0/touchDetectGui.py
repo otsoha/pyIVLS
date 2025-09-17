@@ -11,6 +11,7 @@ from plugins.plugin_components import (
     DependencyManager,
 )
 from components.worker_thread import WorkerThread
+from components.threadStopped import ThreadStopped
 
 
 class touchDetectGUI:
@@ -305,7 +306,7 @@ class touchDetectGUI:
             self.monitoring_thread.progress.connect(self._on_monitoring_progress)
             self.monitoring_thread.error.connect(self._on_monitoring_error)
             self.monitoring_thread.finished.connect(self._on_monitoring_finished)
-            self.monitoring_thread.result.connect(self._on_monitoring_result)
+            self.monitoring_thread.result_signal.connect(self._on_monitoring_result)
             self.monitoring_thread.start()
         else:
             self.logger.log_info("Stopping monitoring thread")
@@ -482,19 +483,21 @@ class touchDetectGUI:
     def sequenceStep(self, postfix: str) -> tuple[int, dict]:
         """Performs the sequence step by moving all configured manipulators to contact."""
         self.logger.log_info(f"Starting touchDetect sequence step with postfix: {postfix}")
+        try:
+            # Execute move to contact for all configured manipulators
+            status, state = self.move_to_contact()
 
-        # Execute move to contact for all configured manipulators
-        status, state = self.move_to_contact()
+            if status != 0:
+                self.logger.log_warn(f"TouchDetect sequence step failed: {state}")
+                return (status, state)
 
-        if status != 0:
-            self.logger.log_warn(f"TouchDetect sequence step failed: {state}")
-            return (status, state)
-
-        self.logger.log_info("TouchDetect sequence step completed successfully")
-        return (
-            0,
-            {"Error message": "TouchDetect sequence step completed successfully"},
-        )
+            self.logger.log_info("TouchDetect sequence step completed successfully")
+            return (
+                0,
+                {"Error message": "TouchDetect sequence step completed successfully"},
+            )
+        except ThreadStopped as _:
+            return (3, {"Error message": "Thread stopped by user"})
 
     @public
     def verify_contact(self) -> tuple[int, dict]:

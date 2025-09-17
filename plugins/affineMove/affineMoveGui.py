@@ -18,6 +18,7 @@ from plugin_components import (
 )
 from collisionDetection import CollisionDetector
 from affineMoveVisualization import AffineMoveVisualization
+from components.threadStopped import ThreadStopped
 
 
 class ViewportClickCatcher(QObject):
@@ -230,10 +231,10 @@ class affineMoveGUI(QObject):
                     f"AffineMove: calibrating manipulator {i + 1}.\nClick on the camera view to set calibration points (Esc to cancel)"
                 )
                 # calibrate
-                status, state = mm["mm_calibrate"]()
-                self.logger.log_debug(
-                    f"Calibration status manipulator {i + 1}: {state.get('Error message', 'Success')}"
-                )
+                #status, state = mm["mm_calibrate"]()
+                #self.logger.log_debug(
+                #    f"Calibration status manipulator {i + 1}: {state.get('Error message', 'Success')}"
+                #)
                 """                
                 # move to "home"
                 status, state = mm["mm_move"](12500, 12500)
@@ -273,7 +274,12 @@ class affineMoveGUI(QObject):
                     if point is None:
                         self.logger.info_popup("Calibration cancelled by user.")
                         return
-                    x, y, z = mm["mm_current_position"]()
+                    ret = mm["mm_current_position"]()
+                    if len(ret) < 3:
+                        self.logger.log_warn(f"Could not retrieve current position for manipulator {i + 1}: {ret}")
+                        return
+                    x, y, z = ret
+
                     self.logger.log_debug(f"Clicked point: {point}, current position: ({x}, {y}, {z})")
                     mm_point = (x, y)
                     points.append((mm_point, point))
@@ -520,7 +526,7 @@ class affineMoveGUI(QObject):
             current_tip_pos = None
             try:
                 mm, _, _ = self._fetch_dep_plugins()
-
+                assert mm is not None, "Micromanipulator plugin not available"
                 # Switch to the manipulator and get its position
                 code, status = mm["mm_change_active_device"](manipulator_idx)
                 if code == 0:
@@ -842,47 +848,43 @@ class affineMoveGUI(QObject):
         Returns:
             tuple: (status, state_dict) from the movement operation
         """
-        try:
-            mm, _, _ = self._fetch_dep_plugins()
-            if mm is None:
-                return 1, {"Error message": "Micromanipulator plugin not available"}
+        mm, _, _ = self._fetch_dep_plugins()
+        if mm is None:
+            return 1, {"Error message": "Micromanipulator plugin not available"}
 
-            # Change to the target manipulator
-            code, status = mm["mm_change_active_device"](manipulator_idx)
-            if code != 0:
-                return code, {"Error message": f"Failed to change to manipulator {manipulator_idx}"}
-            if z is not None:
-                mm["mm_move"](z=z)  # move z first to prevent scratches
-            # Perform the move
-            status, state = mm["mm_move"](x=x, y=y)
-            if status == 0:  # Success
-                # Update cached position
-                final_pos = mm["mm_current_position"]()
-                if final_pos and len(final_pos) >= 3:
-                    self.update_manipulator_position(manipulator_idx, final_pos)
+        # Change to the target manipulator
+        code, status = mm["mm_change_active_device"](manipulator_idx)
+        if code != 0:
+            return code, {"Error message": f"Failed to change to manipulator {manipulator_idx}"}
+        if z is not None:
+            mm["mm_move"](z=z)  # move z first to prevent scratches
+        # Perform the move
+        status, state = mm["mm_move"](x=x, y=y)
+        if status == 0:  # Success
+            # Update cached position
+            final_pos = mm["mm_current_position"]()
+            if final_pos and len(final_pos) >= 3:
+                self.update_manipulator_position(manipulator_idx, final_pos)
 
-                    # Update bounding box tip position if calibration exists
-                    if manipulator_idx in self.calibrations:
-                        try:
-                            # Convert MM coordinates to camera coordinates
-                            cam_pos = self.convert_mm_to_camera_coords((final_pos[0], final_pos[1]), manipulator_idx)
-                            if cam_pos:
-                                # Update collision detector with new tip position
-                                self.collision_detector.update_manipulator_tip_position(
-                                    manipulator_idx, cam_pos[0], cam_pos[1]
-                                )
-                                self.logger.log_debug(
-                                    f"Updated bounding box tip for manipulator {manipulator_idx} to camera coords: {cam_pos}"
-                                )
-                        except Exception as e:
-                            self.logger.log_debug(f"Could not update bounding box tip after move: {e}")
+                # Update bounding box tip position if calibration exists
+                if manipulator_idx in self.calibrations:
+                    # Convert MM coordinates to camera coordinates
+                    cam_pos = self.convert_mm_to_camera_coords((final_pos[0], final_pos[1]), manipulator_idx)
+                    if cam_pos:
+                        # Update collision detector with new tip position
+                        self.collision_detector.update_manipulator_tip_position(
+                            manipulator_idx, cam_pos[0], cam_pos[1]
+                        )
+                        self.logger.log_debug(
+                            f"Updated bounding box tip for manipulator {manipulator_idx} to camera coords: {cam_pos}"
+                        )
 
-                self.logger.log_debug(f"Successfully moved manipulator {manipulator_idx} to ({x}, {y})")
 
-            return status, state
+            self.logger.log_debug(f"Successfully moved manipulator {manipulator_idx} to ({x}, {y})")
 
-        except Exception as e:
-            return 1, {"Error message": f"Exception during move: {str(e)}"}
+        return status, state
+
+
 
     def _get_target_coords_in_camera(self):
         """
@@ -1014,25 +1016,25 @@ class affineMoveGUI(QObject):
 
             # check if plugins are available
             if mm is None or pos is None:
-                return [3, f"_error_iter{currentIteration}"]
+                return [3, "Dependencies not set for AffineMove"]
 
             # open mm and check for errors
             status, state = mm["mm_open"]()
             if status:
                 self.logger.log_info(f"Error opening micromanipulator: {state.get('Error message', str(state))}")
-                return [1, f"_error_iter{currentIteration}"]
+                return [1, "Sutter HW error"]
 
             # check if there are measurement points available
             if len(self.measurement_points) == 0:
                 self.logger.log_info("No measurement points available")
-                return [3, f"_error_iter{currentIteration}"]
+                return [3, "No measurement points available"]
 
             # check if currentIteration is valid
             if currentIteration >= len(self.measurement_points):
                 self.logger.log_info(
                     f"Invalid iteration {currentIteration}, only {len(self.measurement_points)} points available"
                 )
-                return [3, f"_error_iter{currentIteration}"]
+                return [3, f"Invalid iteration {currentIteration}"]
 
             points = self.measurement_points[currentIteration]  # these are stored as mask coordinates
             point_name = self.measurement_point_names[currentIteration]
@@ -1053,7 +1055,7 @@ class affineMoveGUI(QObject):
 
             if not camera_target_points:
                 self.logger.log_warn("No valid target points after coordinate conversion")
-                return [3, f"_error_iter{currentIteration}"]
+                return [3, f"Invalid iteration {currentIteration}"]
 
             # Get current positions of all manipulators in camera coordinates
             current_positions = {}
@@ -1089,54 +1091,52 @@ class affineMoveGUI(QObject):
 
             if not moves_dict:
                 self.logger.log_warn("No valid moves to execute after position validation")
-                return [3, f"_error_iter{currentIteration}"]
+                return [3, f"Invalid iteration {currentIteration}"]
 
             # Use collision detection to determine safe movement sequence
-            try:
-                self.logger.log_info("Starting collision detection analysis...")
-                self.logger.log_info(
-                    f"Moves to analyze: {[(k, f'({v[0][0]:.1f},{v[0][1]:.1f}) -> ({v[1][0]:.1f},{v[1][1]:.1f})') for k, v in moves_dict.items()]}"
-                )
+            self.logger.log_info("Starting collision detection analysis...")
 
-                # Log bounding box information
-                bbox_info = []
-                for manip_idx in moves_dict.keys():
-                    bbox = self.collision_detector.get_bounding_box(manip_idx)
-                    if bbox:
-                        corners = bbox.get_absolute_corners()
-                        bbox_info.append(f"M{manip_idx}: tip=({bbox.tip_x:.1f},{bbox.tip_y:.1f}), bbox={corners}")
-                    else:
-                        bbox_info.append(f"M{manip_idx}: no bounding box")
-                self.logger.log_info(f"Bounding boxes: {bbox_info}")
-
-                safe_sequence = self.collision_detector.generate_safe_movement_sequence(moves_dict)
-
-                if not safe_sequence:
-                    self.logger.log_warn("No safe movement sequence found - potential collision risk")
-                    return [1, f"_error_iter{currentIteration}_no_safe_sequence"]
-
-                self.logger.log_info(f"Safe movement sequence found with {len(safe_sequence)} moves: {safe_sequence}")
-
-                # Preview the planned sequence before execution
-                self._preview_planned_sequence(safe_sequence)
-
-                # Execute the moves in the safe sequence
-                status, message = self.execute_move_list(safe_sequence)
-
-                if status == 0:
-                    self.logger.log_info(f"Successfully completed iteration {currentIteration}: {point_name}")
-                    return [0, f"_iter{currentIteration}_{point_name}"]
+            # Log bounding box information
+            bbox_info = []
+            for manip_idx in moves_dict.keys():
+                bbox = self.collision_detector.get_bounding_box(manip_idx)
+                if bbox:
+                    corners = bbox.get_absolute_corners()
+                    bbox_info.append(f"M{manip_idx}: tip=({bbox.tip_x:.1f},{bbox.tip_y:.1f}), bbox={corners}")
                 else:
-                    self.logger.log_warn(f"Movement execution failed: {message}")
-                    return [1, f"_error_iter{currentIteration}"]
+                    bbox_info.append(f"M{manip_idx}: no bounding box")
+            self.logger.log_info(f"Bounding boxes: {bbox_info}")
 
-            except Exception as e:
-                self.logger.log_warn(f"Collision detection error: {str(e)}")
-                return [1, f"_error_iter{currentIteration}"]
+            safe_sequence = self.collision_detector.generate_safe_movement_sequence(moves_dict)
 
+            if not safe_sequence:
+                self.logger.log_warn("No safe movement sequence found - potential collision risk")
+                return [1, f"Invalid iteration {currentIteration} - no safe sequence"]
+
+            self.logger.log_info(f"Safe movement sequence found with {len(safe_sequence)} moves: {safe_sequence}")
+
+            # Preview the planned sequence before execution
+            self._preview_planned_sequence(safe_sequence)
+
+            # Execute the moves in the safe sequence
+            status, message = self.execute_move_list(safe_sequence)
+
+            if status == 0:
+                self.logger.log_info(f"Successfully completed iteration {currentIteration}: {point_name}")
+                return [0, f"_iter{currentIteration}_{point_name}"]
+            else:
+                self.logger.log_warn(f"Movement execution failed: {message}")
+                return [1, "Error in movement execution"]
+
+        except ThreadStopped as _:
+            mm, _, _ = self._fetch_dep_plugins()
+            if mm:
+                mm["mm_stop"]()
+            self.logger.log_info("Movement thread stopped by user")
+            return (3, {"Error message": "Thread stopped by user"})
         except Exception as e:
             self.logger.log_info(f"Error in loopingIteration: {str(e)}")
-            return [2, f"_error_iter{currentIteration}"]
+            return [2, f"Error in looping iteration: {str(e)}"]
 
     def execute_move_list(self, move_sequence: list[tuple[int, tuple[float, float]]]) -> tuple[int, str]:
         """
@@ -1149,65 +1149,60 @@ class affineMoveGUI(QObject):
         Returns:
             tuple: (status, message) where status is 0 for success, 1+ for errors
         """
-        try:
-            mm, _, _ = self._fetch_dep_plugins()
-            if mm is None:
-                return 1, "Micromanipulator plugin not available"
+        mm, _, _ = self._fetch_dep_plugins()
+        if mm is None:
+            return 1, "Micromanipulator plugin not available"
 
-            # Store the full sequence and reset iterator
-            self.current_sequence = move_sequence.copy()
-            self.sequence_iter = 0
+        # Store the full sequence and reset iterator
+        self.current_sequence = move_sequence.copy()
+        self.sequence_iter = 0
 
-            successful_moves = 0
-            total_moves = len(move_sequence)
+        successful_moves = 0
+        total_moves = len(move_sequence)
 
-            self.logger.log_info(f"Executing {total_moves} manipulator moves in sequence")
+        self.logger.log_info(f"Executing {total_moves} manipulator moves in sequence")
 
-            for move_idx, (manip_idx, (target_cam_x, target_cam_y)) in enumerate(move_sequence):
-                # Update planned moves visualization for the NEXT move
-                self._update_planned_moves_visualization(move_idx)
+        for move_idx, (manip_idx, (target_cam_x, target_cam_y)) in enumerate(move_sequence):
+            # Update planned moves visualization for the NEXT move
+            self._update_planned_moves_visualization(move_idx)
 
-                # Convert target camera coordinates to MM coordinates
-                target_mm_coords = self.convert_to_mm_coords((target_cam_x, target_cam_y), manip_idx)
-                if target_mm_coords is None:
-                    self.logger.log_warn(f"Failed to convert coordinates for manipulator {manip_idx}, skipping")
-                    continue
+            # Convert target camera coordinates to MM coordinates
+            target_mm_coords = self.convert_to_mm_coords((target_cam_x, target_cam_y), manip_idx)
+            if target_mm_coords is None:
+                self.logger.log_warn(f"Failed to convert coordinates for manipulator {manip_idx}, skipping")
+                continue
 
-                target_mm_x, target_mm_y = target_mm_coords
+            target_mm_x, target_mm_y = target_mm_coords
 
-                self.logger.log_info(
-                    f"Moving manipulator {manip_idx}: Camera ({target_cam_x:.1f}, {target_cam_y:.1f}) -> MM ({target_mm_x:.3f}, {target_mm_y:.3f})"
-                )
+            self.logger.log_info(
+                f"Moving manipulator {manip_idx}: Camera ({target_cam_x:.1f}, {target_cam_y:.1f}) -> MM ({target_mm_x:.3f}, {target_mm_y:.3f})"
+            )
 
-                # Execute the move using the wrapper that updates bounding box
-                status, state = self.move_manipulator_and_update_bounding_box(manip_idx, target_mm_x, target_mm_y, z=0)
+            # Execute the move using the wrapper that updates bounding box
+            status, state = self.move_manipulator_and_update_bounding_box(manip_idx, target_mm_x, target_mm_y, z=0)
 
-                if status == 0:  # Success
-                    successful_moves += 1
-                    self.sequence_iter += 1
-                    self.logger.log_info(f"Successfully moved manipulator {manip_idx}")
+            if status == 0:  # Success
+                successful_moves += 1
+                self.sequence_iter += 1
+                self.logger.log_info(f"Successfully moved manipulator {manip_idx}")
 
-                    # Update collision detector with new position
-                    if manip_idx in self.collision_detector.bounding_boxes:
-                        self.collision_detector.bounding_boxes[manip_idx].move_bbox(target_cam_x, target_cam_y)
-                else:
-                    error_msg = state.get("Error message", str(state)) if isinstance(state, dict) else str(state)
-                    self.logger.log_warn(f"Failed to move manipulator {manip_idx}: {error_msg}")
-                    return 1, f"Movement failed for manipulator {manip_idx}: {error_msg}"
-
-            # Signal that sequence is completed
-            self.sequence_completed_signal.emit()
-
-            if successful_moves == total_moves:
-                self.logger.log_info(f"All {total_moves} manipulator movements completed successfully")
-                return 0, f"Successfully completed {successful_moves}/{total_moves} moves"
+                # Update collision detector with new position
+                if manip_idx in self.collision_detector.bounding_boxes:
+                    self.collision_detector.bounding_boxes[manip_idx].move_bbox(target_cam_x, target_cam_y)
             else:
-                return 1, f"Only {successful_moves}/{total_moves} moves completed successfully"
+                error_msg = state.get("Error message", str(state))
+                self.logger.log_warn(f"Failed to move manipulator {manip_idx}: {error_msg}")
+                return 1, f"Movement failed for manipulator {manip_idx}: {error_msg}"
 
-        except Exception as e:
-            error_msg = f"Exception during move execution: {str(e)}"
-            self.logger.log_warn(error_msg)
-            return 2, error_msg
+        # Signal that sequence is completed
+        self.sequence_completed_signal.emit()
+
+        if successful_moves == total_moves:
+            self.logger.log_info(f"All {total_moves} manipulator movements completed successfully")
+            return 0, f"Successfully completed {successful_moves}/{total_moves} moves"
+        else:
+            return 1, f"Only {successful_moves}/{total_moves} moves completed successfully"
+
 
     def _update_planned_moves_visualization(self, current_move_idx: int):
         """
@@ -1226,19 +1221,17 @@ class affineMoveGUI(QObject):
         manip_idx, (target_cam_x, target_cam_y) = self.current_sequence[current_move_idx]
 
         # Get current position in camera coordinates
-        try:
-            cached_pos = self.get_cached_manipulator_position(manip_idx)
-            if cached_pos and len(cached_pos) >= 2:
-                current_cam_pos = self.convert_mm_to_camera_coords((cached_pos[0], cached_pos[1]), manip_idx)
-                if current_cam_pos:
-                    # Create planned move data: (manipulator_idx, current_pos, target_pos)
-                    planned_moves = [(manip_idx, current_cam_pos, (target_cam_x, target_cam_y))]
+        cached_pos = self.get_cached_manipulator_position(manip_idx)
+        if cached_pos and len(cached_pos) >= 2:
+            current_cam_pos = self.convert_mm_to_camera_coords((cached_pos[0], cached_pos[1]), manip_idx)
+            if current_cam_pos:
+                # Create planned move data: (manipulator_idx, current_pos, target_pos)
+                planned_moves = [(manip_idx, current_cam_pos, (target_cam_x, target_cam_y))]
 
-                    # Emit signal to update visualization from main thread
-                    self.update_planned_moves_signal.emit(planned_moves)
-                    return
-        except Exception as e:
-            self.logger.log_debug(f"Could not get current position for planned move visualization: {e}")
+                # Emit signal to update visualization from main thread
+                self.update_planned_moves_signal.emit(planned_moves)
+                return
+
 
         # If we couldn't get current position, clear visualization
         self.clear_planned_moves_signal.emit()
@@ -1254,15 +1247,13 @@ class affineMoveGUI(QObject):
         preview_moves = []
 
         for manip_idx, (target_cam_x, target_cam_y) in move_sequence:
-            try:
-                # Get current position in camera coordinates
-                cached_pos = self.get_cached_manipulator_position(manip_idx)
-                if cached_pos and len(cached_pos) >= 2:
-                    current_cam_pos = self.convert_mm_to_camera_coords((cached_pos[0], cached_pos[1]), manip_idx)
-                    if current_cam_pos:
-                        preview_moves.append((manip_idx, current_cam_pos, (target_cam_x, target_cam_y)))
-            except Exception as e:
-                self.logger.log_debug(f"Could not get position for preview of manipulator {manip_idx}: {e}")
+            # Get current position in camera coordinates
+            cached_pos = self.get_cached_manipulator_position(manip_idx)
+            if cached_pos and len(cached_pos) >= 2:
+                current_cam_pos = self.convert_mm_to_camera_coords((cached_pos[0], cached_pos[1]), manip_idx)
+                if current_cam_pos:
+                    preview_moves.append((manip_idx, current_cam_pos, (target_cam_x, target_cam_y)))
+
 
         if preview_moves:
             # Emit signal to show preview

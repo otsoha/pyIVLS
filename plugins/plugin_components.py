@@ -117,6 +117,7 @@ class PyIVLSReturnCode(Enum):
     DEPENDENCY_ERROR = 2
     MISSING_DEPENDENCY = 3
     HARDWARE_ERROR = 4
+    THREAD_STOPPED = 5
     # add more if needed, also add a factory method for each new code
 
 

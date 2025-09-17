@@ -368,53 +368,66 @@ class pyIVLS_seqBuilder(QObject):
 
     def _runParser(self):
         """Runs the sequence parser, iterates through the sequence and executes the steps."""
-        ###############Main logic of iteration: 0 - no iterations, 1 - only start point, 2 - start end end point, iterstep = (end-start)/(iternum -1).The same is used in sweepCommon for drainVoltage. !!!Adapt to logic of iteration, do not modify it!!!
-        self.log_message.emit("pyIVLS_seqBuilder: Running sequence parser")
-        data = self.extract_data(self.model.invisibleRootItem().child(0))
-        stackData = copy.deepcopy(data)  #### it is necessary to make sure that we did not modify original data
-        looping = []  # this will keep track of the steps inside the loop, every element is a dict[{looping -the steps to repeat, loopFunction - looping Function, totalSteps - number of steps in loop, currentStep, totalIterations, currentIteration}]
-        while (not stackData == []) or (not looping == []):
-            if not looping == []:
-                if looping[-1]["currentStep"] == 0:
-                    [status, iterText] = self.available_instructions[looping[-1]["loopFunction"]]["functions"]["loopingIteration"](looping[-1]["currentIteration"])
+        try:
+            ###############Main logic of iteration: 0 - no iterations, 1 - only start point, 2 - start end end point, iterstep = (end-start)/(iternum -1).The same is used in sweepCommon for drainVoltage. !!!Adapt to logic of iteration, do not modify it!!!
+            self.log_message.emit("pyIVLS_seqBuilder: Running sequence parser")
+            data = self.extract_data(self.model.invisibleRootItem().child(0))
+            stackData = copy.deepcopy(data)  #### it is necessary to make sure that we did not modify original data
+            looping = []  # this will keep track of the steps inside the loop, every element is a dict[{looping -the steps to repeat, loopFunction - looping Function, totalSteps - number of steps in loop, currentStep, totalIterations, currentIteration}]
+            while (not stackData == []) or (not looping == []):
+                if not looping == []:
+                    if looping[-1]["currentStep"] == 0:
+                        [status, iterText] = self.available_instructions[looping[-1]["loopFunction"]]["functions"]["loopingIteration"](looping[-1]["currentIteration"])
+                        if status:
+                            raise ValueError(iterText)
+                            """
+                            print(f"Error: {iterText}")
+                            self._sigSeqEnd.emit()  # Added
+                            self._setNotRunning()  # Added
+                            break
+                            """
+                        looping[-1]["namePostfix"] = iterText
+                        looping[-1]["currentIteration"] = looping[-1]["currentIteration"] + 1
+                        looping[-1]["currentStep"] = looping[-1]["currentStep"] + 1
+                    elif looping[-1]["currentStep"] == looping[-1]["totalSteps"]:
+                        if looping[-1]["currentIteration"] < looping[-1]["totalIterations"]:
+                            looping[-1]["currentStep"] = 0
+                            stackData = looping[-1]["looping"] + stackData
+                        else:
+                            looping.pop(-1)
+                        continue
+                    else:
+                        looping[-1]["currentStep"] = looping[-1]["currentStep"] + 1
+                stackItem = stackData.pop(0)
+                nextStepFunction = stackItem["function"]
+                nextStepSettings = stackItem["settings"]
+                nextStepClass = stackItem["class"]
+                self.available_instructions[nextStepFunction]["functions"]["setSettings"](nextStepSettings)
+                if nextStepClass == "step":
+                    namePostfix = ""
+                    for loopItem in looping:
+                        namePostfix = namePostfix + loopItem["namePostfix"]
+                    [status, message] = self.available_instructions[nextStepFunction]["functions"]["sequenceStep"](namePostfix)
                     if status:
-                        print(f"Error: {iterText}")
+                        raise ValueError(message)
+                        """
+                        print(f"Error: {message}")
                         self._sigSeqEnd.emit()  # Added
                         self._setNotRunning()  # Added
+                        """
                         break
-                    looping[-1]["namePostfix"] = iterText
-                    looping[-1]["currentIteration"] = looping[-1]["currentIteration"] + 1
-                    looping[-1]["currentStep"] = looping[-1]["currentStep"] + 1
-                elif looping[-1]["currentStep"] == looping[-1]["totalSteps"]:
-                    if looping[-1]["currentIteration"] < looping[-1]["totalIterations"]:
-                        looping[-1]["currentStep"] = 0
-                        stackData = looping[-1]["looping"] + stackData
-                    else:
-                        looping.pop(-1)
-                    continue
-                else:
-                    looping[-1]["currentStep"] = looping[-1]["currentStep"] + 1
-            stackItem = stackData.pop(0)
-            nextStepFunction = stackItem["function"]
-            nextStepSettings = stackItem["settings"]
-            nextStepClass = stackItem["class"]
-            self.available_instructions[nextStepFunction]["functions"]["setSettings"](nextStepSettings)
-            if nextStepClass == "step":
-                namePostfix = ""
-                for loopItem in looping:
-                    namePostfix = namePostfix + loopItem["namePostfix"]
-                [status, message] = self.available_instructions[nextStepFunction]["functions"]["sequenceStep"](namePostfix)
-                if status:
-                    print(f"Error: {message}")
-                    self._sigSeqEnd.emit()  # Added
-                    self._setNotRunning()  # Added
-                    break
-            if nextStepClass == "loop":
-                iter = self.available_instructions[nextStepFunction]["functions"]["getIterations"]()
-                looping.append({"looping": stackItem["looping"], "loopFunction": nextStepFunction, "totalSteps": len(stackItem["looping"]), "currentStep": 0, "totalIterations": iter, "currentIteration": 0, "namePostfix": ""})
-                stackData = stackItem["looping"] + stackData
-        self.log_message.emit("pyIVLS_seqBuilder: Sequence parser finished")
-        self._sigSeqEnd.emit()
+                if nextStepClass == "loop":
+                    iter = self.available_instructions[nextStepFunction]["functions"]["getIterations"]()
+                    looping.append({"looping": stackItem["looping"], "loopFunction": nextStepFunction, "totalSteps": len(stackItem["looping"]), "currentStep": 0, "totalIterations": iter, "currentIteration": 0, "namePostfix": ""})
+                    stackData = stackItem["looping"] + stackData
+            self.log_message.emit("pyIVLS_seqBuilder: Sequence parser finished")
+            self._sigSeqEnd.emit()
+        except Exception as e:
+            print(f"Error occurred: {e}")
+        finally:
+            self._setNotRunning()
+            self._sigSeqEnd.emit()  
+
 
     def _runAction(self):
         # disable controls
@@ -432,8 +445,8 @@ class pyIVLS_seqBuilder(QObject):
         """Stops the running sequence thread."""
         if hasattr(self, "run_thread") and self.run_thread.is_alive():
             try:
-                _ = self.run_thread.thread_stop()
-                # self.info_message.emit("Stop requested: " + result[1])
+                result = self.run_thread.thread_stop()
+                self.info_message.emit("Stop requested: " + result[1])
             except Exception as e:
                 self.info_message.emit(f"Failed to stop thread: {e}")
         else:

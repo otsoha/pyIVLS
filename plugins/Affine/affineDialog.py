@@ -20,6 +20,7 @@ from typing import Optional
 import time
 from components.worker_thread import WorkerThread
 
+
 class dialog(QDialog):
     """
     Affine registration dialog for manual and automatic matching.
@@ -35,7 +36,7 @@ class dialog(QDialog):
 
     info_msg = pyqtSignal(str)
 
-    def __init__(self, affine, img, mask, settings, pointslist=None, logger:Optional[LoggingHelper]=None):
+    def __init__(self, affine, img, mask, settings, pointslist=None, logger: Optional[LoggingHelper] = None):
         """
         Initialize the dialog.
         Args:
@@ -59,8 +60,7 @@ class dialog(QDialog):
                 child.valueChanged.connect(self._preprocessing_settings_changed)
             elif isinstance(child, QLineEdit):
                 child.textChanged.connect(self._preprocessing_settings_changed)
-        
-        
+
         # Connect backend combobox to settings change handler
         for child in self.ui.groupBox_2.children():
             if isinstance(child, QComboBox):
@@ -78,8 +78,8 @@ class dialog(QDialog):
         self.img_scene = QGraphicsScene()
         self.mask_scene = QGraphicsScene()
 
-        self.logger = logger 
-        self.worker_thread = None  # Initialize worker thread reference 
+        self.logger = logger
+        self.worker_thread = None  # Initialize worker thread reference
 
         # Connect mouse events for manual mode
         self.ui.imgView.mousePressEvent = self._img_view_clicked
@@ -132,7 +132,7 @@ class dialog(QDialog):
         self.ui.crossCheck.setChecked(settings["crosscheck"])
         self.ui.ratioCombo.setCurrentText(str(settings["ratiotest"]))
         self.ui.residualCombo.setCurrentText(str(settings["residualthreshold"]))
-        
+
         # Set up conditional enabling connections
         self.ui.manualThresholdMask.stateChanged.connect(self._update_threshold_mask_state)
         self.ui.manualThresholdImage.stateChanged.connect(self._update_threshold_image_state)
@@ -142,7 +142,7 @@ class dialog(QDialog):
         self.ui.cannyMask.stateChanged.connect(self._update_sigma_mask_state)
         self.ui.blurImage.stateChanged.connect(self._update_sigma_image_state)
         self.ui.cannyImage.stateChanged.connect(self._update_sigma_image_state)
-        
+
         # Update initial states
         self._update_threshold_mask_state()
         self._update_threshold_image_state()
@@ -327,13 +327,12 @@ class dialog(QDialog):
             mask_pixmap = self.to_pixmap(mask)
             if mask_pixmap is not None and mask_scene is not None:
                 mask_scene.addItem(QGraphicsPixmapItem(mask_pixmap))
-            
+
     def minimize_preprocess_images(self):
-        """Minimize the preprocess
-        """
+        """Minimize the preprocess"""
 
     def info_message(self, msg: str) -> None:
-            self.info_msg.emit(msg)
+        self.info_msg.emit(msg)
 
     @pyqtSlot(str)
     def show_message(self, str):
@@ -355,120 +354,121 @@ class dialog(QDialog):
             show_points (bool): Whether to show points.
             draw_matches (bool): Whether to draw matches.
         """
-        kp1 = result["kp1"]
-        kp2 = result["kp2"]
-        matches = result["matches"]
-        mask_img = result["mask"]
-        img_img = result["img"]
-        h1, w1 = mask_img.shape[:2]
-        h2, w2 = img_img.shape[:2]
-        out_img = np.zeros((max(h1, h2), w1 + w2, 3), dtype=np.uint8)
-        out_img[:h1, :w1] = mask_img if mask_img.ndim == 3 else np.stack([mask_img] * 3, axis=-1)
-        out_img[:h2, w1 : w1 + w2] = img_img if img_img.ndim == 3 else np.stack([img_img] * 3, axis=-1)
-        fig, ax = plt.subplots(figsize=(10, 5))
-        ax.imshow(out_img)
-        # Draw matches
-        if draw_matches:
-            # Get indices of matched keypoints
-            matched_indices_1 = set()
-            matched_indices_2 = set()
-            
-            for m in matches:
-                idx1, idx2 = m
-                matched_indices_1.add(idx1)
-                matched_indices_2.add(idx2)
-                y1, x1 = kp1[idx1]
-                y2, x2 = kp2[idx2]
-                ax.plot([x1, x2 + w1], [y1, y2], "r-", linewidth=0.5)
-                ax.plot(x1, y1, "bo", markersize=2)
-                ax.plot(x2 + w1, y2, "go", markersize=2)
-            
-            # Draw unmatched keypoints in mask (left side)
-            for idx, (y, x) in enumerate(kp1):
-                if idx not in matched_indices_1:
-                    ax.plot(x, y, "co", markersize=1.5, alpha=0.7)  # cyan circles for unmatched mask keypoints
-            
-            # Draw unmatched keypoints in image (right side)  
-            for idx, (y, x) in enumerate(kp2):
-                if idx not in matched_indices_2:
-                    ax.plot(x + w1, y, "mo", markersize=1.5, alpha=0.7)  # magenta circles for unmatched image keypoints
-        # Draw defined points
-        if show_points and pointslist is not None:
-            for pt in pointslist:
-                x_mask, y_mask = pt
-                ax.plot(
-                    x_mask,
-                    y_mask,
-                    "mo",
-                    markersize=6,
-                    markeredgewidth=2,
-                    markeredgecolor="k",
-                )
-                x_img, y_img = self.affine.coords((x_mask, y_mask))
-                ax.plot(
-                    x_img + w1,
-                    y_img,
-                    "co",
-                    markersize=6,
-                    markeredgewidth=2,
-                    markeredgecolor="k",
-                )
-        ax.axis("off")
-        plt.tight_layout()
-        # Overlay transformed mask outline on the image if affine matrix exists
-        if hasattr(self.affine, "A") and self.affine.A is not None:
-            h_mask, w_mask = mask_img.shape[:2]
-            corners = np.array(
-                [[0, 0], [w_mask, 0], [w_mask, h_mask], [0, h_mask]],
-                dtype=np.float32,
-            )
-            transformed = np.array([self.affine.coords((x, y)) for x, y in corners])
-            for i in range(4):
-                x0, y0 = transformed[i % 4]
-                x1_, y1_ = transformed[(i + 1) % 4]
-                ax.plot([x0 + w1, x1_ + w1], [y0, y1_], "y-", linewidth=1)
-        canvas = FigureCanvas(fig)
-        scene = self.ui.resultView.scene()
-        if scene is not None:
-            scene.clear()
-        else:
-            scene = QGraphicsScene()
-            self.ui.resultView.setScene(scene)
-        canvas.draw()
-        width, height = canvas.get_width_height()
-        img_buf = canvas.buffer_rgba()
-        qimg = QImage(img_buf, width, height, QImage.Format.Format_RGBA8888)
-        pixmap = QPixmap.fromImage(qimg)
-        scene.addItem(QGraphicsPixmapItem(pixmap))
-        plt.close(fig)
+        try:
+            kp1 = result["kp1"]
+            kp2 = result["kp2"]
+            matches = result["matches"]
+            mask_img = result["mask"]
+            img_img = result["img"]
+            h1, w1 = mask_img.shape[:2]
+            h2, w2 = img_img.shape[:2]
+            out_img = np.zeros((max(h1, h2), w1 + w2, 3), dtype=np.uint8)
+            out_img[:h1, :w1] = mask_img if mask_img.ndim == 3 else np.stack([mask_img] * 3, axis=-1)
+            out_img[:h2, w1 : w1 + w2] = img_img if img_img.ndim == 3 else np.stack([img_img] * 3, axis=-1)
+            fig, ax = plt.subplots(figsize=(10, 5))
+            ax.imshow(out_img)
+            # Draw matches
+            if draw_matches:
+                # Get indices of matched keypoints
+                matched_indices_1 = set()
+                matched_indices_2 = set()
 
+                for m in matches:
+                    idx1, idx2 = m
+                    matched_indices_1.add(idx1)
+                    matched_indices_2.add(idx2)
+                    y1, x1 = kp1[idx1]
+                    y2, x2 = kp2[idx2]
+                    ax.plot([x1, x2 + w1], [y1, y2], "r-", linewidth=0.5)
+                    ax.plot(x1, y1, "bo", markersize=2)
+                    ax.plot(x2 + w1, y2, "go", markersize=2)
+
+                # Draw unmatched keypoints in mask (left side)
+                for idx, (y, x) in enumerate(kp1):
+                    if idx not in matched_indices_1:
+                        ax.plot(x, y, "co", markersize=1.5, alpha=0.7)  # cyan circles for unmatched mask keypoints
+
+                # Draw unmatched keypoints in image (right side)
+                for idx, (y, x) in enumerate(kp2):
+                    if idx not in matched_indices_2:
+                        ax.plot(
+                            x + w1, y, "mo", markersize=1.5, alpha=0.7
+                        )  # magenta circles for unmatched image keypoints
+            # Draw defined points
+            if show_points and pointslist is not None:
+                for pt in pointslist:
+                    x_mask, y_mask = pt
+                    ax.plot(
+                        x_mask,
+                        y_mask,
+                        "mo",
+                        markersize=6,
+                        markeredgewidth=2,
+                        markeredgecolor="k",
+                    )
+                    x_img, y_img = self.affine.coords((x_mask, y_mask))
+                    ax.plot(
+                        x_img + w1,
+                        y_img,
+                        "co",
+                        markersize=6,
+                        markeredgewidth=2,
+                        markeredgecolor="k",
+                    )
+            ax.axis("off")
+            plt.tight_layout()
+            # Overlay transformed mask outline on the image if affine matrix exists
+            if hasattr(self.affine, "A") and self.affine.A is not None:
+                h_mask, w_mask = mask_img.shape[:2]
+                corners = np.array(
+                    [[0, 0], [w_mask, 0], [w_mask, h_mask], [0, h_mask]],
+                    dtype=np.float32,
+                )
+                transformed = np.array([self.affine.coords((x, y)) for x, y in corners])
+                for i in range(4):
+                    x0, y0 = transformed[i % 4]
+                    x1_, y1_ = transformed[(i + 1) % 4]
+                    ax.plot([x0 + w1, x1_ + w1], [y0, y1_], "y-", linewidth=1)
+            canvas = FigureCanvas(fig)
+            scene = self.ui.resultView.scene()
+            if scene is not None:
+                scene.clear()
+            else:
+                scene = QGraphicsScene()
+                self.ui.resultView.setScene(scene)
+            canvas.draw()
+            width, height = canvas.get_width_height()
+            img_buf = canvas.buffer_rgba()
+            qimg = QImage(img_buf, width, height, QImage.Format.Format_RGBA8888)
+            pixmap = QPixmap.fromImage(qimg)
+            scene.addItem(QGraphicsPixmapItem(pixmap))
+            plt.close(fig)
+        except KeyError as e:
+            self.info_message(f"KeyError during result drawing: {e}")
 
     def _on_match_button_clicked(self):
         """
         Handle match button click event. Runs automatic matching and displays the result.
         """
+
         def _run_matching(worker_thread):
             """
             Perform the actual matching work. This runs in a separate thread.
             """
 
-                
             img = self.img
             self.affine.try_match(img)
             result = self.affine.result
-            
+
             # Emit progress with result data
-            worker_thread.progress.emit({
-                'result': result,
-                'pointslist': self.pointslist
-            })
-            
+            worker_thread.progress.emit({"result": result, "pointslist": self.pointslist})
+
             return result
 
         def _on_matching_progress(data):
             """Handle progress updates from the worker thread."""
-            result = data['result']
-            pointslist = data['pointslist']
+            result = data["result"]
+            pointslist = data["pointslist"]
 
             # Print keypoint statistics
             kp1_count = len(result["kp1"])
@@ -494,17 +494,17 @@ class dialog(QDialog):
         try:
             self.info_message("Starting automatic matching...")
             self._preprocessing_settings_changed()
-            
+
             # Disable the match button to prevent multiple simultaneous operations
             self.ui.matchButton.setEnabled(False)
             self.ui.manualButton.setEnabled(False)
-            
+
             # Create and configure the worker thread
             self.worker_thread = WorkerThread(task=_run_matching)
             self.worker_thread.progress.connect(_on_matching_progress)
             self.worker_thread.finished.connect(_on_matching_finished)
             self.worker_thread.error.connect(_on_matching_error)
-            
+
             # Start the worker thread
             self.worker_thread.start()
 
@@ -522,7 +522,9 @@ class dialog(QDialog):
         self.mask_points = []
         self.img_points = []
         self._draw_manual_points()
-        self.info_message(f"Manual mode enabled. Click {self.num_needed} points on the mask (left), then {self.num_needed} on the image (right). Colors indicate matching order.")
+        self.info_message(
+            f"Manual mode enabled. Click {self.num_needed} points on the mask (left), then {self.num_needed} on the image (right). Colors indicate matching order."
+        )
 
     def _draw_manual_points(self):
         """
@@ -622,5 +624,3 @@ class dialog(QDialog):
                 self._draw_manual_points()
         else:
             self.info_message("All image points selected. If you want to retry, re-enter manual mode.")
-
-

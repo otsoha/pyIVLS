@@ -378,7 +378,7 @@ class touchDetect:
                 uncontacting = self._get_uncontacting(smu, con, mm, manipulator_info)
 
                 if not uncontacting:
-                    self._log("All configured manipulators are contacting - proceeding to stability monitoring")
+                    self._log("All configured manipulators are contacting")
                     break
 
                 self._log(
@@ -397,7 +397,11 @@ class touchDetect:
                     # move until contact is detected using the method that does not use the last known position
                     status, result = self._move_until_contact(mm, smu, info, correction_max_distance)
                     if status == 0:
-                        self._log(f"Manipulator {info.mm_number} corrected successfully")
+                        self._log(f"Manipulator {info.mm_number} corrected successfully, starting monitoring")
+                        # After moving, monitor stability for a few seconds
+                        stable = self._monitor_contact_stability(smu, info, duration_seconds=self.MONITORING_DURATION)
+                        if stable:
+                            self._log(f"Manipulator {info.mm_number} contact is stable after correction")
                     else:
                         self._log(f"Failed to correct contact for manipulator {info.mm_number}: {result}")
 
