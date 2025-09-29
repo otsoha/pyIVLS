@@ -55,7 +55,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import QCheckBox, QComboBox, QDoubleSpinBox, QLineEdit, QSpinBox, QWidget
-
+from dataclasses import dataclass
 
 class ConnectionIndicatorStyle(Enum):
     """Enum for connection indicator styles."""
@@ -120,7 +120,110 @@ class PyIVLSReturnCode(Enum):
     THREAD_STOPPED = 5
     # add more if needed, also add a factory method for each new code
 
+#unused
+@dataclass
+class KeithleySettings:
+    source: str
+    drain: str
+    type: str
+    sourcesense: bool
+    drainsense: bool
+    single_ch: bool
+    pulse: bool
+    pulsepause: float
+    sourcenplc: float
+    drainnplc: float
+    delay: bool
+    delayduration: float
+    draindelay: bool
+    draindelayduration: float
+    steps: int
+    start: float
+    end: float
+    limit: float
+    sourcehighc: bool
+    drainhighc: bool
+    repeat: int
+    drainvoltage: float
+    drainlimit: float
 
+    def _check_types(self):
+        if not isinstance(self.source, str):
+            raise TypeError("Source must be a string")
+        if not isinstance(self.drain, str):
+            raise TypeError("Drain must be a string")
+        if not isinstance(self.type, str):
+            raise TypeError("Type must be a string")
+        if not isinstance(self.sourcesense, bool):
+            raise TypeError("Source sense must be a boolean")
+        if not isinstance(self.drainsense, bool):
+            raise TypeError("Drain sense must be a boolean")
+        if not isinstance(self.single_ch, bool):
+            raise TypeError("Single channel must be a boolean")
+        if not isinstance(self.pulse, bool):
+            raise TypeError("Pulse must be a boolean")
+        if not isinstance(self.pulsepause, (int, float)):
+            raise TypeError("Pulse pause must be a number")
+        if not isinstance(self.sourcenplc, (int, float)):
+            raise TypeError("Source NPLC must be a number")
+        if not isinstance(self.drainnplc, (int, float)):
+            raise TypeError("Drain NPLC must be a number")
+        if not isinstance(self.delay, bool):
+            raise TypeError("Delay must be a boolean")
+        if not isinstance(self.delayduration, (int, float)):
+            raise TypeError("Delay duration must be a number")
+        if not isinstance(self.draindelay, bool):
+            raise TypeError("Drain delay must be a boolean")
+        if not isinstance(self.draindelayduration, (int, float)):
+            raise TypeError("Drain delay duration must be a number")
+        if not isinstance(self.steps, int):
+            raise TypeError("Steps must be an integer")
+        if not isinstance(self.start, (int, float)):
+            raise TypeError("Start value must be a number")
+        if not isinstance(self.end, (int, float)):
+            raise TypeError("End value must be a number")
+        if not isinstance(self.limit, (int, float)):
+            raise TypeError("Limit must be a number")
+        if not isinstance(self.sourcehighc, bool):
+            raise TypeError("Source high C must be a boolean")
+        if not isinstance(self.drainhighc, bool):
+            raise TypeError("Drain high C must be a boolean")
+        if not isinstance(self.repeat, int):
+            raise TypeError("Repeat count must be an integer")
+        if not isinstance(self.drainvoltage, float):
+            raise TypeError("Drain voltage must be a number")
+        if not isinstance(self.drainlimit, float):
+            raise TypeError("Drain limit must be a number")
+
+    def validate(self):
+        self._check_types()
+        if self.source not in ["smua", "smub"]:
+            raise ValueError("Source must be 'smua' or 'smub'")
+        if self.drain not in ["smua", "smub"]:
+            raise ValueError("Drain must be 'smua' or 'smub'")
+        if self.type not in ["i", "v"]:
+            raise ValueError("Type must be 'i' or 'v'")
+        if self.steps <= 0:
+            raise ValueError("Steps must be a positive integer")
+        if self.limit <= 0:
+            raise ValueError("Limit must be a positive number")
+        if self.sourcenplc <= 0:
+            raise ValueError("Source NPLC must be a positive number")
+        if self.drainnplc <= 0:
+            raise ValueError("Drain NPLC must be a positive number")
+        if self.delay and self.delayduration < 0:
+            raise ValueError("Delay duration must be non-negative")
+        if self.draindelay and self.draindelayduration < 0:
+            raise ValueError("Drain delay duration must be non-negative")
+        if self.repeat <= 0:
+            raise ValueError("Repeat count must be a positive integer")
+        if self.pulse and self.pulsepause < 0:
+            raise ValueError("Pulse pause duration must be non-negative")
+        if self.single_ch and self.drain != "voltage":
+            raise ValueError("In single channel mode, drain must be set to 'voltage'")
+        
+    def __post_init__(self):
+        self.validate()
 class PyIVLSReturn:
     """
     This class provides a standardized way to handle returns across all plugin (GUIs, since the ll-implementation should be stand-alone) while

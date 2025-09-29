@@ -11,3 +11,4 @@ pyIVLS.log
 *.csv
 *.dat
 pyIVLS.ini
+!ivls_data.dat

@@ -4,6 +4,9 @@ import pyvisa
 import usbtmc
 import numpy as np
 from enum import Enum
+from typing import Optional
+from pyvisa.resources import MessageBasedResource
+
 
 # for mock connection
 def readIVLS(address):
@@ -12,6 +15,7 @@ def readIVLS(address):
     except Exception as e:
         print(f"Exception reading mock data file: {address}\nException: {e}")
         return [-1, str(e)]
+
 
 class BackendType(Enum):
     USB = "USB"
@@ -67,6 +71,9 @@ class BackendType(Enum):
 
 
 class Keithley2612B:
+    ke: Optional[MessageBasedResource] = None
+    k: Optional[usbtmc.Instrument] = None
+    mock_con: bool = False
     ####################################  threads
 
     ################################### internal functions
@@ -77,18 +84,13 @@ class Keithley2612B:
 
     ########Functions
     def __init__(self):
-        # handler for Keithley
-        self.k = None
-        self.ke = None
-        self.mock_con = False
-
         # Initialize pyvisa resource manager
         self.rm = pyvisa.ResourceManager("@py")
 
         # Initialize the lock for the measurement
         self.lock = Lock()
 
-        # initialize mock data 
+        # initialize mock data
         self.datafile_address = os.path.dirname(__file__) + os.path.sep + "ivls_data.dat"
         self.linepointer = 0
         self.dataarray = np.array([])
@@ -111,13 +113,11 @@ class Keithley2612B:
             else:
                 raise ValueError(f"Unknown backend: {self.backend}")
 
-
         except Exception as e:
             ##IRtodo#### mov to the log
             print(f"Exception sending command: {command}\nException: {e}")
             ##IRtothink#### some exception handling should be implemented
             raise e
-
 
     def safequery(self, command: str) -> str:
         try:
@@ -130,29 +130,27 @@ class Keithley2612B:
             elif self.backend == BackendType.ETHERNET.value:
                 if self.ke is None:
                     raise ValueError("Keithley 2612B is not connected. Please connect first.")
-                ret = self.ke.query(command, )
+                ret: str = self.ke.query(command)
                 return ret
             elif self.backend == BackendType.MOCK.value:
                 if not self.mock_con:
                     raise ValueError("Keithley 2612B mock is not connected. Please connect first.")
                 print(f"MOCK query: {command}")
                 return "0"
+            else:
+                raise ValueError(f"Unknown backend: {self.backend}")
         except Exception as e:
             ##IRtodo#### mov to the log
             print(f"Exception querying command: {command}\nException: {e}")
             ##IRtothink#### some exception handling implemented
             raise e
 
-
-    def keithley_IDN(self):
+    def keithley_IDN(self) -> str:
         return "keith"
 
-    def keithley_connect(self, address, eth_address, backend, port):  # -> status:
+    def keithley_connect(self, address, eth_address, backend, port) -> None:
         """Connect to the Keithley 2612B.
-
-        Returns [status, message]:
-            0 - no error, ~0 - error (add error code later on if needed)
-            message contains devices response to IDN query if devices is connected, or an error message otherwise
+        Returns nothing, throws error
         """
         self.address = address
         self.eth_address = eth_address
@@ -160,31 +158,24 @@ class Keithley2612B:
         self.backend = backend
 
         if self.backend == BackendType.USB.value:
-            print("usb backend")
             if self.k is None:
-                print("USB initial connection")
                 #### connect with usbtmc
                 self.k = usbtmc.Instrument(self.address)
+                assert self.k.connected, "Could not connect to Keithley 2612B via USB"
                 self.k.timeout = 25  # in seconds??
         elif self.backend == BackendType.ETHERNET.value:
-            print("ethernet backend")
             if self.ke is None:
-                print("Ethernet initial connection")
                 #### connect with pyvisa resource manager
                 visa_rsc_str = f"TCPIP::{self.eth_address}::{self.port}::SOCKET"
-                self.ke = self.rm.open_resource(
-                    visa_rsc_str, resource_pyclass=pyvisa.resources.TCPIPSocket
-                )
-                assert self.ke is not None
+                self.ke = self.rm.open_resource(visa_rsc_str, resource_pyclass=pyvisa.resources.TCPIPSocket)  # type: ignore[assignment]
+                assert self.ke is not None, "Could not connect to Keithley 2612B via Ethernet"
                 self.ke.timeout = 25000  # in milliseconds
                 self.ke.read_termination = "\n"
                 self.ke.write_termination = "\n"
         elif self.backend == BackendType.MOCK.value:
             self.mock_con = True
-            print("WARNING: USING MOCK CONNECTION")
             [status, self.dataarray] = readIVLS(self.datafile_address)
             assert status == 0
-
 
         else:
             raise ValueError(f"Unknown backend: {self.backend}")
@@ -192,18 +183,17 @@ class Keithley2612B:
             ##IRtodo#### move to log
             # print(self.k.query("*IDN?"))
 
-    def keithley_disconnect(self):
+    def keithley_disconnect(self) -> None:
         ##IRtodo#### move to log
         # print("Disconnecting from Keithley 2612B")
-                    
-        if self.k is not None:
-            self.k.close()
-        # HOX: do not close self.ke, because    
+
+        # CURRENTLY DOES NOTHING
+
+        # HOX: do not close self.ke, because
         # close on a visa resource also marks the handle
-        # To be invalid. This messes with future connection attempts. 
+        # To be invalid. This messes with future connection attempts.
         # https://pyvisa.readthedocs.io/en/1.8/api/resources.html#pyvisa.resources.Resource.close
-
-
+        pass
 
     ## Device functions
     def resistance_measurement(self, channel) -> float:
@@ -220,10 +210,10 @@ class Keithley2612B:
             raise ValueError(f"Invalid channel {channel}")
 
     def resistance_measurement_setup(self, channel) -> tuple[bool, str]:
-        """Measure the resistance at the probe.
+        """Set up the device for resistance measurement.
 
         Returns:
-            bool: success
+            tuple[bool, str]: (status, message)
         """
         if channel == "smua" or channel == "smub":
             # Restore Series 2600B defaults.
@@ -249,7 +239,7 @@ class Keithley2612B:
         else:
             raise ValueError(f"Invalid channel {channel}")
 
-    def getLineFrequency(self):
+    def getLineFrequency(self) -> int:
         """gets line frequency from Keithley 2612B for nplc calculation.
 
         Returns [status, message]:
@@ -260,7 +250,7 @@ class Keithley2612B:
         # return freq
         return 50
 
-    def getIV(self, channel):
+    def getIV(self, channel) -> list[float]:
         """gets IV data
 
         Returns:
@@ -272,14 +262,12 @@ class Keithley2612B:
             i_value = self.dataarray[readings, 0]
             v_value = self.dataarray[readings, 1]
             self.linepointer = self.linepointer + 1
-            print(i_value, v_value)
-            return [i_value, v_value, readings]
+            return [i_value, v_value]
         else:
             test = self.safequery(f"print ({channel}.measure.iv())").split("\t")
-            print(f"Test Query for IV data: {test}")
             return list(np.array(test).astype(float))
 
-    def setOutput(self, channel, outputType, value):
+    def setOutput(self, channel, outputType, value) -> None:
         """sets smu output but does not switch it ON
         channel = "smua" or "smub"
         outputType = "i" or "v"
@@ -288,7 +276,7 @@ class Keithley2612B:
         ##IRtothink#### some check may be added
         self.safewrite(f"{channel}.source.level{outputType} = {value}")
 
-    def get_last_buffer_value(self, channel, readings=None):
+    def get_last_buffer_value(self, channel, readings=None) -> list[Optional[float]]:
         """
         Args:
             channel (str): smua or smub
@@ -296,12 +284,12 @@ class Keithley2612B:
         Returns:
             list [i, v, number of point in the buffer]
         """
-        ##IRtothink#### some check may be added to make sure that the value may be converted
         if self.backend == BackendType.MOCK.value:
             readings = self.linepointer
             i_value = self.dataarray[readings, 0]
             v_value = self.dataarray[readings, 1]
             self.linepointer = self.linepointer + 1
+            print()
             return [i_value, v_value, readings]
         else:
             if readings is None:
@@ -348,7 +336,7 @@ class Keithley2612B:
             )
             return np.array(iv)
 
-    def abort_sweep(self, channel):
+    def abort_sweep(self, channel) -> None:
         """
         aborts the sweep
         Args:
@@ -356,7 +344,7 @@ class Keithley2612B:
         """
         self.safewrite(f"{channel}.abort()")
 
-    def channelsON(self, source, drain):
+    def channelsON(self, source: Optional[str] = None, drain: Optional[str] = None) -> None:
         """
         switches on channels
         """
@@ -365,14 +353,14 @@ class Keithley2612B:
         if drain is not None:
             self.safewrite(f"{drain}.source.output={drain}.OUTPUT_ON")
 
-    def channelsOFF(self):
+    def channelsOFF(self) -> None:
         """
         switches off both channels
         """
         self.safewrite("smua.source.output=smua.OUTPUT_OFF")
         self.safewrite("smub.source.output=smub.OUTPUT_OFF")
 
-    def keithley_init(self, s: dict):
+    def keithley_init(self, s: dict) -> int:
         ##IRtothink#### pulsed operation should be rechecked if strict pulse duration will be needed
         # """Initialize Keithley SMU for single or dual channel operation.
         #
@@ -509,9 +497,7 @@ class Keithley2612B:
                 self.safewrite(f"{s['drain']}.measure.autorangei = {s['drain']}.AUTORANGE_ON")
                 self.safewrite(f"{s['drain']}.measure.autorangev = {s['drain']}.AUTORANGE_ON")
 
-            return 0
-
-
+        return 0
 
     def keithley_run_sweep(self, s: dict):  # -> status:
         """Runs a single channel sweep on. Handles locking the instrument and releasing it after the sweep is started.
@@ -637,3 +623,14 @@ class Keithley2612B:
             raise ValueError(f"Failed to set digio line {line_id} to {value}. Current value is {curr_value}.")
 
         return True if int(last_value) == 1 else False
+
+    def channel_names(self, backend) -> list:
+        """Returns the channel names available in the instrument.
+
+        Returns:
+            list: list of channel names
+        """
+        if backend == BackendType.MOCK.value:
+            return ["mockA", "mockB"]
+        else:
+            return ["smua", "smub"]

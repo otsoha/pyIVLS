@@ -88,22 +88,22 @@ class sweepGUI(QObject):
 
     def _connect_signals(self):
         # Connect the channel combobox
-        self.settingsWidget.comboBox_mode.currentIndexChanged.connect(self._mode_changed)
 
         # Connect the inject type combobox
         inject_box = self.settingsWidget.findChild(QComboBox, "comboBox_inject")
-        inject_box.currentIndexChanged.connect(self._inject_changed)
-
         delay_continuous = self.settingsWidget.findChild(QComboBox, "comboBox_continuousDelayMode")
         delay_pulsed = self.settingsWidget.findChild(QComboBox, "comboBox_pulsedDelayMode")
         delay_drain = self.settingsWidget.findChild(QComboBox, "comboBox_drainDelayMode")
 
-        delay_continuous.currentIndexChanged.connect(self._delay_continuous_mode_changed)
-        delay_pulsed.currentIndexChanged.connect(self._delay_pulsed_mode_changed)
-        delay_drain.currentIndexChanged.connect(self._delay_drain_mode_changed)
-        self.settingsWidget.smuBox.currentIndexChanged.connect(self._smu_plugin_changed)
-
-        self.settingsWidget.checkBox_singleChannel.stateChanged.connect(self._single_channel_changed)
+        # the overhead created by just calling _update_GUI_state instead of the smaller updates is negligible,
+        # but it helps to keep the code simpler IMO
+        inject_box.currentIndexChanged.connect(self._update_GUI_state)
+        self.settingsWidget.comboBox_mode.currentIndexChanged.connect(self._update_GUI_state)
+        delay_continuous.currentIndexChanged.connect(self._update_GUI_state)
+        delay_pulsed.currentIndexChanged.connect(self._update_GUI_state)
+        delay_drain.currentIndexChanged.connect(self._update_GUI_state)
+        self.settingsWidget.smuBox.activated.connect(self._update_GUI_state)
+        self.settingsWidget.checkBox_singleChannel.stateChanged.connect(self._update_GUI_state)
 
         self.settingsWidget.directoryButton.clicked.connect(self._getAddress)
         self.settingsWidget.stopButton.clicked.connect(self._stopAction)
@@ -278,6 +278,8 @@ class sweepGUI(QObject):
         """Handles the visibility of the SMU settings based on the selected SMU plugin."""
         smu_selection = self.settingsWidget.smuBox.currentText()
         if smu_selection in self.function_dict["smu"]:
+            # update smu:
+            self.function_dict["smu"][smu_selection]["parse_settings_widget"]()
             available_channels = self.function_dict["smu"][smu_selection]["smu_channelNames"]()
             # get channel names from the selected SMU plugin
             self.settingsWidget.comboBox_channel.clear()

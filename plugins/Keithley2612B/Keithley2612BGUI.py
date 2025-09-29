@@ -1,4 +1,5 @@
 import os
+from typing import Optional
 
 # from Keithley2612B_test import Keithley2612B
 from Keithley2612B import Keithley2612B
@@ -73,15 +74,13 @@ class Keithley2612BGUI:
         self.smu = Keithley2612B()
         self.settings = {}
 
-        self.channel_names = ["smua", "smub"]
-
     ########Functions
     ###############GUI setting up
 
     def _initGUI(
         self,
         plugin_info,
-    ):
+    ) -> None:
         if plugin_info["sourcehighc"] == "True":
             self.settingsWidget.checkBox_sourceHighC.setChecked(True)
         if plugin_info["drainhighc"] == "True":
@@ -93,19 +92,26 @@ class Keithley2612BGUI:
 
     ########Functions
     ########plugins interraction
-    def _get_public_methods(self):
+    def _get_public_methods(self) -> dict:
         """
         Returns a nested dictionary of public methods for the plugin
         """
         # if the plugin type matches the requested type, return the functions
 
-        methods = {method: getattr(self, method) for method in dir(self) if callable(getattr(self, method)) and not method.startswith("__") and not method.startswith("_") and method not in self.non_public_methods}
+        methods = {
+            method: getattr(self, method)
+            for method in dir(self)
+            if callable(getattr(self, method))
+            and not method.startswith("__")
+            and not method.startswith("_")
+            and method not in self.non_public_methods
+        }
         return methods
 
     ########Functions to be used externally
     ###############get settings from GUI
 
-    def parse_settings_widget(self):
+    def parse_settings_widget(self) -> tuple[int, dict]:
         """Parses the settings widget for the Keithley. Extracts current values
 
         Returns [status, settings_dict]:
@@ -114,40 +120,41 @@ class Keithley2612BGUI:
         """
 
         # Determine a HighC mode for source: may be True or False
-        if self.settingsWidget.checkBox_sourceHighC.isChecked():
-            self.settings["sourcehighc"] = True
-        else:
-            self.settings["sourcehighc"] = False
+        self.settings["sourcehighc"] = self.settingsWidget.checkBox_sourceHighC.isChecked()
 
         # Determine a HighC mode for drain: may be True or False
-        if self.settingsWidget.checkBox_drainHighC.isChecked():
-            self.settings["drainhighc"] = True
-        else:
-            self.settings["drainhighc"] = False
+        self.settings["drainhighc"] = self.settingsWidget.checkBox_drainHighC.isChecked()
         if "lineFrequency" not in self.settings:
             info = self.smu.getLineFrequency()
             self.settings["lineFrequency"] = info
         self._parse_settings_address()
-        return [0, self.settings]
+        return (0, self.settings)
 
-    def _parse_settings_address(self):
+    def _parse_settings_address(self) -> None:
+        """Updates the address, eth_address, backend and port in self.settings from the GUI"""
         self.settings["address"] = self.settingsWidget.lineEditAddress.text()
         self.settings["eth_address"] = self.settingsWidget.lineEditETH.text()
         self.settings["backend"] = self.settingsWidget.backendCombobox.currentText()
         self.settings["port"] = self.settingsWidget.lineEditPort.text()
 
     ###############GUI enable/disable
-    def set_running(self, status):
+    def set_running(self, status: bool) -> None:
+        """Sets the running state of the GUI elements.
+
+        Args:
+            status (bool): True if the plugin is running, False otherwise.
+        """
         self.settingsWidget.groupBox_HWsettings.setEnabled(not status)
         self.settingsWidget.groupBox_channels.setEnabled(not status)
 
     ###############providing access to SMU functions
-    def smu_channelNames(self):
+    def smu_channelNames(self) -> list[str]:
         """provides channel names for particular SMU
         this should make plugins more universal, but still need to be rechecked"""
-        return self.channel_names
+        self._parse_settings_address()
+        return self.smu.channel_names(self.settings["backend"])
 
-    def smu_connect(self):
+    def smu_connect(self) -> tuple[int, dict]:
         """an interface for an externall calling function to connect to Keithley
 
         Returns [status, message]:
@@ -157,42 +164,43 @@ class Keithley2612BGUI:
         """
         self._parse_settings_address()
         try:
-            self.smu.keithley_connect(self.settings["address"], self.settings["eth_address"], self.settings["backend"], self.settings["port"])
-            return [0, self.smu.keithley_IDN()]
+            self.smu.keithley_connect(
+                self.settings["address"], self.settings["eth_address"], self.settings["backend"], self.settings["port"]
+            )
+            return (0, {"Error message": self.smu.keithley_IDN()})
         except Exception as e:
-            return [
+            return (
                 4,
                 {
                     "Error message": "Hardware error in Keithley2612B plugin: can not connect to the device",
                     "Exception": e,
                 },
-            ]
+            )
 
-    def smu_disconnect(self):
+    def smu_disconnect(self) -> None:
         """an interface for an externall calling function to disconnect Keithley"""
         self.smu.keithley_disconnect()
 
-    def smu_abort(self, channel):
+    def smu_abort(self, channel) -> None:
         """An interface for an externall calling function to stop the sweep on Keithley
         (this function will NOT switch OFF the outputs)
         s: channel to get the last value (may be 'smua' or 'smub')
         """
-
         self.smu.abort_sweep(channel)
 
-    def smu_outputON(self, source=None, drain=None):
+    def smu_outputON(self, source: Optional[str] = None, drain: Optional[str] = None) -> None:
         """An interface for an externall calling function to switch on the output
 
         source and drain are "smua" or "smub"
         """
         self.smu.channelsON(source, drain)
 
-    def smu_outputOFF(self):
+    def smu_outputOFF(self) -> None:
         """An interface for an externall calling function to switch off the output"""
 
         self.smu.channelsOFF()
 
-    def smu_init(self, s: dict):
+    def smu_init(self, s: dict) -> int:
         """an interface for an externall calling function to initialize Keithley
         s: dictionary containing the settings for the sweep to initialize. It is different from the self. settings, as it contains data only for the current sweep
 
@@ -207,7 +215,7 @@ class Keithley2612BGUI:
         """
         return self.smu.keithley_init(s)
 
-    def smu_runSweep(self, s: dict):
+    def smu_runSweep(self, s: dict) -> int:
         """an interface for an externall calling function to run sweep on Keithley
         s: dictionary containing the settings to run the sweep. It is different from the self. settings, as it contains data only for the current sweep
 
@@ -222,7 +230,7 @@ class Keithley2612BGUI:
         """
         return self.smu.keithley_run_sweep(s)
 
-    def smu_getLastBufferValue(self, channel, readings=None):
+    def smu_getLastBufferValue(self, channel, readings=None) -> list:
         """an interface for an externall calling function to get last buffer value from Keithley
         s: channel to get the last value (may be 'smua' or 'smub')
 
@@ -248,7 +256,6 @@ class Keithley2612BGUI:
         """
         return (0, self.smu.getIV(channel))
 
-
     def smu_setOutput(self, channel, outputType, value):
         #        """sets smu output but does not switch it ON
         # channel = "smua" or "smub"
@@ -257,7 +264,6 @@ class Keithley2612BGUI:
         #        """
         self.smu.setOutput(channel, outputType, value)
         return [0, "OK"]
-
 
     def smu_setup_resmes(self, channel):
         """Sets up resistance measurement
@@ -274,7 +280,6 @@ class Keithley2612BGUI:
         else:
             return (4, {"Error message": f"HW issue in keithley resistance setup: {err_text}"})
 
-
     def smu_resmes(self, channel):
         """Measures resistance on the specified channel.
 
@@ -286,7 +291,6 @@ class Keithley2612BGUI:
         """
         resistance = self.smu.resistance_measurement(channel)
         return (0, resistance)
-
 
     def smu_set_digio(self, channel, value):
         """Sets digital output on the specified channel.
@@ -300,4 +304,3 @@ class Keithley2612BGUI:
         """
         self.smu.set_digio(channel, value)
         return (0, {"Error message": "Digital output set successfully"})
-
